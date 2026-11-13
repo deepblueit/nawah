@@ -1,0 +1,10 @@
+{
+  "name": "nawah",
+  "private": true,
+  "type": "module",
+  "description": "Nawah: the operating system of TAMM Tech Solutions. Static, no build step.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "python3 -m http.server 8080"
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+# private files exported from the app never belong in this public repository
+nawah-starter*.json
+nawah-backup*.json
+*.private.json
