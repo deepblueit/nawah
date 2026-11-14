@@ -84,7 +84,7 @@ register('weekly', {
         <section class="module">
           <header class="module-head"><h2>الأحد: أولوياتك الثلاث</h2></header>
           <p class="muted small">لكل أولوية مخرج ملموس نهاية الأسبوع، والرابعة ممنوعة.</p>
-          ${carry.length ? html`<div class="carry"><p>متبقٍ من الأسبوع الماضي، احمله أو أسقطه بوعي:</p><ul>${carry.map(c => html`<li><span>${c.t}</span>${btn('احمله', { act: 'carry', kind: 'quiet', cls: 'btn-small', data: { t: c.t, start } })}</li>`)}</ul></div>` : ''}
+          ${carry.length ? html`<div class="carry"><p>ما تبقى من الأسبوع الماضي، احمله أو أسقطه بوعي:</p><ul>${carry.map(c => html`<li><span>${c.t}</span>${btn('احمله', { act: 'carry', kind: 'quiet', cls: 'btn-small', data: { t: c.t, start } })}</li>`)}</ul></div>` : ''}
           <form data-form="week-plan" data-start="${start}" class="stack" data-tour="plan-week">
             <div class="prio-head" aria-hidden="true"><span></span><span>الأولوية</span><span>المخرج الملموس نهاية الأسبوع</span><span></span></div>
             ${[0, 1, 2].map(i => { const p = (mine.priorities || [])[i] || {}; return html`<div class="prio-in"><span class="prio-n">${i + 1}</span><input name="t${i}" value="${p.t || ''}" placeholder="الأولوية ${i + 1}" aria-label="الأولوية ${i + 1}"${editable ? '' : raw(' disabled')}><input name="o${i}" value="${p.output || ''}" placeholder="المخرج الملموس" aria-label="المخرج الملموس للأولوية ${i + 1}"${editable ? '' : raw(' disabled')}><label class="chk-done"><input type="checkbox" name="d${i}"${p.done ? raw(' checked') : ''}${editable ? '' : raw(' disabled')}><span>أنجزت</span></label></div>`; })}

@@ -922,3 +922,37 @@ fieldset[disabled] { opacity: .8; }
   input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
   .tabs a, .tabs button { min-height: 42px; }
 }
+
+/* ---------- the mode switch (نواة / التداول) and the trading mode palette */
+.mode-slot:empty { display: none; }
+.mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; margin: 0 4px 14px; border-radius: 12px; background: var(--paper-2); border: 1px solid var(--line); }
+.mode-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; border: 0; border-radius: 9px; background: none; color: var(--muted); font-size: .88rem; font-weight: 500; }
+.mode-switch button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(8, 24, 39, .12); }
+.mode-switch button[data-mode="trade"][aria-pressed="true"] .i { color: var(--gold); }
+body.collapsed .mode-switch { grid-template-columns: 1fr; }
+body.collapsed .mode-switch .lbl { display: none; }
+[data-side="deep"] .mode-switch { background: rgba(255, 255, 255, .06); border-color: transparent; }
+[data-side="deep"] .mode-switch button[aria-pressed="true"] { background: rgba(255, 255, 255, .12); color: var(--deep-ink); }
+
+[data-mode="trade"] {
+  --tr-up: #1F9A6E; --tr-down: #D24A41; --tr-info: #3D6FD0; --tr-violet: #7A5CCB;
+  --tr-bull-zone: rgba(31, 154, 110, .13); --tr-bear-zone: rgba(210, 74, 65, .12);
+  --tr-grid: rgba(19, 45, 70, .07); --tr-axis: #607385; --tr-line: rgba(19, 45, 70, .32);
+  --accent: #8E6C33; --accent-ink: #FFFFFF; --accent-soft: rgba(201, 167, 106, .2); --accent-text: #7A5A24;
+}
+[data-mode="trade"][data-tlook="night"] {
+  --paper: #07131F; --paper-2: #050E17; --surface: #0B1B2A; --surface-2: #0F2336;
+  --line: #16304A; --line-2: #22415F; --ink: #E2E9EF; --ink-2: #AEBFCD; --muted: #7C91A4;
+  --side-bg: #060F19; --side-ink: #B6C6D3;
+  --accent: #C9A76A; --accent-ink: #1A1305; --accent-soft: rgba(201, 167, 106, .14); --accent-text: #E1C38D;
+  --tr-up: #3FCF9A; --tr-down: #F0645A; --tr-info: #6E9BF2; --tr-violet: #A98BF0;
+  --tr-bull-zone: rgba(63, 207, 154, .12); --tr-bear-zone: rgba(240, 100, 90, .12);
+  --tr-grid: rgba(150, 175, 200, .07); --tr-axis: #7C91A4; --tr-line: rgba(160, 185, 210, .32);
+  --t-good: #6FDDB2; --t-bad: #F59A93; --t-warn: #EBC27A;
+  --shadow: 0 1px 0 rgba(0, 0, 0, .25), 0 12px 30px -20px rgba(0, 0, 0, .7);
+}
+[data-mode="trade"] .main { max-width: 1680px; }
+[data-mode="trade"] .brand small { color: var(--gold-deep); }
+[data-mode="trade"][data-tlook="night"] .brand small { color: var(--gold); }
+.t-boot { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 40px 0; }
+.t-boot-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gold); animation: breathe 1.4s ease-in-out infinite; }

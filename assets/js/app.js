@@ -8,7 +8,7 @@ import { wire, onAct, onForm, onChange, onInput } from './core/actions.js';
 import { html, raw } from './core/html.js';
 import { icon, nawahMark } from './core/icons.js';
 import { toast, drawer, closeDrawer, modal, closeModal, btn, editRecord, avatar, confirmBox } from './core/ui.js';
-import { SECTIONS, NAV, BOTTOM, canOpen, navList } from './core/nav.js';
+import { SECTIONS, NAV, BOTTOM, NAV_TRADE, BOTTOM_TRADE, canOpen, navList, modeOf } from './core/nav.js';
 import { local, matches, normalize, ago, fmtDate, fmtHijri, today, readFile } from './core/util.js';
 import { DEFAULT_SETTINGS, SETUP_TEMPLATE, NAWAH_SKILLS, ROLES } from './seed.js';
 import { needsYou, approvalsWaiting } from './sections/shared.js';
@@ -20,6 +20,10 @@ import './sections/finance.js';
 import './sections/marketing.js';
 import './sections/nawah.js';
 import './sections/system.js';
+import './sections/trade.js';
+
+// Help and the personal page belong to both modes, so opening them keeps the current one.
+for (const k of ['help', 'me']) if (SECTIONS[k]) SECTIONS[k].shared = true;
 
 const $ = sel => document.querySelector(sel);
 const root = () => document.getElementById('app');
@@ -74,6 +78,13 @@ function applyPrefs() {
   d.dataset.density = p.density;
   d.dataset.motion = p.motion;
   document.body.classList.toggle('collapsed', !!p.collapsed);
+  // the trading mode has its own night and day looks, chosen in its settings
+  if (ctx.mode === 'trade') {
+    const day = local.get('nawah.trade.look', 'night') === 'day';
+    d.dataset.theme = day ? 'light' : 'dark';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', day ? '#F2F5F0' : '#07131F');
+    return;
+  }
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0B1F33' : '#F2F5F0');
 }
 media.addEventListener?.('change', applyPrefs);
@@ -99,7 +110,7 @@ async function boot() {
     if (ev.source === 'local') sync.soon();
     if (ev.col === 'members' && ctx.me) ctx.me = store.get('members', ctx.me.id) || ctx.me;
     clearTimeout(t);
-    t = setTimeout(() => { if (ctx.me) { renderNav(); renderMain(); renderTop(); } }, 30);
+    t = setTimeout(() => { if (ctx.me) { renderNav(); if (!SECTIONS[ctx.route.key]?.stable) renderMain(); renderTop(); } }, 30);
   });
   sync.on(renderSync);
   start();
@@ -107,6 +118,7 @@ async function boot() {
 
 async function start() {
   ctx.route = parseRoute();
+  ctx.mode = local.get('nawah.mode', 'core');
   if (store.space === 'demo' && store.isEmpty()) {
     const { buildDemo } = await import('./demo.js');
     buildDemo(store);
@@ -130,6 +142,10 @@ function enter(me) {
   ensureSeeds();
   shell();
   sync.start();
+  // the Telegram collector keeps running in the background on the device chosen for it
+  if (canOpen('market') && store.space === 'real' && local.get(`nawah.t.${me.id}.poll`, false)) {
+    setTimeout(() => import('./trade/index.js').then(m => m.startBackground()).catch(e => console.warn(e)), 1500);
+  }
 }
 
 // Seeds use fixed ids, so two devices that both seed never create duplicates.
@@ -149,9 +165,10 @@ function shell() {
     <div class="layout">
       <aside class="side" id="side" aria-label="القائمة الرئيسية">
         <div class="brand">
-          <a href="#/" class="brand-link" aria-label="نواة، الرئيسية">${nawahMark(34)}<span class="brand-text"><b>نواة</b><small>${settings.company().name}</small></span></a>
+          <a href="#/" class="brand-link" aria-label="نواة، الرئيسية">${nawahMark(34)}<span class="brand-text"><b>نواة</b><small id="brand-sub">${settings.company().name}</small></span></a>
           <button type="button" class="btn btn-icon btn-quiet side-fold" data-act="toggle-collapse" title="تصغير القائمة" aria-label="تصغير القائمة">${icon('chevR')}</button>
         </div>
+        <div class="mode-slot" id="mode-slot"></div>
         <nav class="nav" id="nav"></nav>
         <nav class="nav nav-bottom" id="nav-bottom"></nav>
       </aside>
@@ -176,12 +193,39 @@ function navItem(key, active) {
   return html`<li><a href="#/${key}" class="${on ? 'on' : ''}${s.soon ? ' soon' : ''}"${on ? raw(' aria-current="page"') : ''} title="${s.label}">${icon(s.icon)}<span class="lbl">${s.label}</span>${n ? html`<span class="count" aria-label="${n} بانتظارك">${n > 99 ? '99+' : n}</span>` : ''}${s.soon ? html`<span class="soon-tag">قريبا</span>` : ''}</a></li>`;
 }
 
+// The current mode follows the open section; shared sections keep the last one.
+export const currentMode = () => modeOf(ctx.route?.key) || ctx.mode || 'core';
+
+export function applyMode() {
+  const mode = currentMode();
+  if (ctx.mode !== mode) { ctx.mode = mode; local.set('nawah.mode', mode); }
+  const d = document.documentElement;
+  d.dataset.mode = mode;
+  if (mode === 'trade') d.dataset.tlook = local.get('nawah.trade.look', 'night'); else delete d.dataset.tlook;
+  applyPrefs();
+}
+ctx.applyMode = applyMode;
+
+function renderModeSwitch(mode) {
+  const slot = $('#mode-slot');
+  if (!slot) return;
+  const sub = $('#brand-sub');
+  if (sub) sub.textContent = mode === 'trade' ? 'وضع التداول' : settings.company().name;
+  if (!canOpen('market')) { slot.innerHTML = ''; return; }
+  slot.innerHTML = String(html`<div class="mode-switch" role="group" aria-label="الوضع">
+    <button type="button" data-act="set-mode" data-mode="core" aria-pressed="${mode === 'core'}" title="نواة: الشركة والعمل">${icon('home')}<span class="lbl">نواة</span></button>
+    <button type="button" data-act="set-mode" data-mode="trade" aria-pressed="${mode === 'trade'}" title="وضع التداول وإكس نواة">${icon('candles')}<span class="lbl">التداول</span></button>
+  </div>`);
+}
+
 function renderNav() {
   const nav = $('#nav');
   if (!nav) return;
   const active = ctx.route.key;
+  const mode = currentMode();
+  renderModeSwitch(mode);
   const folded = new Set(local.get('nawah.folded', []));
-  const list = navList();
+  const list = navList(mode);
   const out = [];
   let group = null;
   let items = [];
@@ -203,9 +247,13 @@ function renderNav() {
   }
   flush();
   nav.innerHTML = String(html`${out}`);
-  $('#nav-bottom').innerHTML = String(html`<ul>${BOTTOM.filter(canOpen).map(k => navItem(k, active))}</ul>`);
+  $('#nav-bottom').innerHTML = String(html`<ul>${(mode === 'trade' ? BOTTOM_TRADE : BOTTOM).filter(canOpen).map(k => navItem(k, active))}</ul>`);
   const bb = $('#bottom-bar');
-  if (bb) {
+  if (bb && mode === 'trade') {
+    const quick = ['market', 'xnawah', 'signals', 'journal'].filter(canOpen);
+    bb.innerHTML = String(html`${quick.map(k => html`<a href="#/${k}" class="${active === k ? 'on' : ''}"${active === k ? raw(' aria-current="page"') : ''}>${icon(SECTIONS[k].icon)}<span>${SECTIONS[k].short || SECTIONS[k].label}</span></a>`)}
+      <button type="button" data-act="open-nav" aria-label="القائمة">${icon('menu')}<span>القائمة</span></button>`);
+  } else if (bb) {
     // whoever approves gets the approvals in reach; everyone else gets the content
     const quick = ['home', 'tasks', canOpen('approvals') ? 'approvals' : 'content'].filter(canOpen);
     bb.innerHTML = String(html`${quick.map(k => {
@@ -251,6 +299,7 @@ function renderSync() {
 }
 
 let lastKey = '';
+let mounted = null;
 export function renderMain() {
   const main = $('#main');
   if (!main || !ctx.me) return;
@@ -262,6 +311,10 @@ export function renderMain() {
     history.replaceState(null, '', '#/');
     s = SECTIONS.home;
   }
+  try { mounted?.unmount?.(); } catch (e) { console.error(e); }
+  mounted = s;
+  applyMode();
+  if (modeOf(ctx.route.key)) local.set(`nawah.last.${ctx.mode}`, location.hash || '#/');
   const active = document.activeElement;
   const keep = active && main.contains(active) && active.dataset?.key ? { key: active.dataset.key, start: active.selectionStart, end: active.selectionEnd } : null;
   const scroll = lastKey === r.key ? window.scrollY : 0;
@@ -492,6 +545,13 @@ onAct({
     renderNav();
   },
   'toggle-collapse': () => savePrefs({ collapsed: !prefs().collapsed }),
+  'set-mode': el => {
+    const target = el.dataset.mode;
+    if (target === currentMode()) return;
+    if (target === 'trade' && !canOpen('market')) { toast('وضع التداول غير متاح لصلاحياتك'); return; }
+    closeNavDrawer();
+    ctx.go(local.get(`nawah.last.${target}`, '') || (target === 'trade' ? '#/market' : '#/'));
+  },
   view: el => setQuery({ view: el.dataset.view }),
   go: el => ctx.go(el.dataset.href),
   palette: () => openPalette(),
@@ -519,6 +579,10 @@ const QUICK = [
   { label: 'سجل قرارا', ic: 'decisions', run: () => editRecord('decisions', null, { defaults: { owner: ctx.me.id, date: today() } }), module: 'decisions' },
   { label: 'التقط معلومة', ic: 'zap', run: () => editRecord('knowledge', null, { defaults: { kind: 'note' } }), module: 'knowledge' },
   { label: 'اجتماع جديد', ic: 'meetings', run: () => editRecord('meetings', null, { defaults: { date: today(), attendees: [ctx.me.id] } }), module: 'meetings' },
+  { label: 'حلل رمزا على الشارت', ic: 'candles', run: () => ctx.go('#/market'), module: 'trade' },
+  { label: 'اسأل إكس نواة', ic: 'orbit', run: () => ctx.go('#/xnawah'), module: 'trade' },
+  { label: 'أضف توصية يدويا', ic: 'signal', run: () => ctx.go('#/signals?add=1'), module: 'trade' },
+  { label: 'سجل صفقة في اليوميات', ic: 'journal', run: () => ctx.go('#/journal?add=1'), module: 'trade' },
 ];
 
 const SEARCHABLE = [
@@ -530,7 +594,7 @@ const SEARCHABLE = [
 
 function paletteResults(q) {
   const out = [];
-  for (const k of [...NAV.filter(n => n.key).map(n => n.key), ...BOTTOM]) {
+  for (const k of [...NAV.filter(n => n.key).map(n => n.key), ...BOTTOM, ...NAV_TRADE.filter(n => n.key).map(n => n.key), 'tsettings']) {
     if (!canOpen(k)) continue;
     const s = SECTIONS[k];
     if (matches(`${s.label} ${s.aka || ''}`, q)) out.push({ kind: 'قسم', label: s.label, ic: s.icon, run: () => ctx.go(`#/${k}`) });

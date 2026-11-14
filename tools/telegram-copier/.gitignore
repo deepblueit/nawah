@@ -1,0 +1,8 @@
+# the login session, your settings and the message map never leave your machine
+*.session
+*.session-journal
+config.json
+map.json
+.venv/
+__pycache__/
+*.tmp

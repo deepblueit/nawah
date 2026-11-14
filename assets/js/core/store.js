@@ -72,8 +72,15 @@ const tx = (db, storeName, mode, fn) => new Promise((ok, fail) => {
   t.onabort = () => fail(t.error);
 });
 
-class Store {
-  constructor() {
+// One class serves the shared company data and the personal trading data. Each instance
+// names its own collections, its database prefix and whether it keeps a change log.
+export class Store {
+  constructor({ collections = COLLECTIONS, prefix = 'nawah', logCol = 'log', backupKind = 'nawah-backup', backupError = 'هذا الملف ليس نسخة احتياطية من نواة' } = {}) {
+    this.collections = collections;
+    this.backupError = backupError;
+    this.prefix = prefix;
+    this.logCol = logCol;
+    this.backupKind = backupKind;
     this.space = 'real';
     this.db = null;
     this.memory = false;
@@ -90,11 +97,11 @@ class Store {
     this.flushNow();
     if (this.db) { try { this.db.close(); } catch (_) { /* ignore */ } }
     this.space = space;
-    this.data = Object.fromEntries(COLLECTIONS.map(c => [c, new Map()]));
+    this.data = Object.fromEntries(this.collections.map(c => [c, new Map()]));
     this.meta = {};
     this.memory = false;
     try {
-      this.db = await idb(`nawah-${space}`);
+      this.db = await idb(`${this.prefix}-${space}`);
       const cols = await new Promise((ok, fail) => {
         const out = {};
         const t = this.db.transaction('cols', 'readonly');
@@ -159,7 +166,7 @@ class Store {
     delete next.deleted;
     this.data[col].set(next.id, next);
     this.markDirty(col);
-    if (log && col !== 'log' && col !== 'settings') this.log(action || (isNew ? 'create' : 'update'), col, next);
+    if (log && col !== this.logCol && col !== 'settings') this.log(action || (isNew ? 'create' : 'update'), col, next);
     if (!quiet) this.emit({ col, ids: [next.id], source: 'local' });
     return next;
   }
@@ -176,7 +183,7 @@ class Store {
     const next = this.stamp({ ...old, deleted: true }, false);
     this.data[col].set(id, next);
     this.markDirty(col);
-    if (log && col !== 'log') this.log('delete', col, old);
+    if (log && col !== this.logCol) this.log('delete', col, old);
     this.emit({ col, ids: [id], source: 'local' });
   }
 
@@ -196,14 +203,15 @@ class Store {
   }
 
   log(action, col, rec, extra = {}) {
+    if (!this.logCol || !this.data[this.logCol]) return;
     const entry = {
       id: `lg${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
       at: Date.now(), by: this.me?.id || 'system', action, col, ref: rec?.id || '', label: String(titleOf(rec)).slice(0, 140), ...extra,
     };
     entry.updatedAt = entry.at;
     entry.createdAt = entry.at;
-    this.data.log.set(entry.id, entry);
-    this.markDirty('log');
+    this.data[this.logCol].set(entry.id, entry);
+    this.markDirty(this.logCol);
   }
 
   // Replace a whole collection with merged records (sync and import). Returns true when it changed.
@@ -283,14 +291,14 @@ class Store {
   // ----- backup
   exportAll() {
     const collections = {};
-    for (const c of COLLECTIONS) collections[c] = this.raw(c);
-    return { kind: 'nawah-backup', version: 1, exportedAt: new Date().toISOString(), space: this.space, collections };
+    for (const c of this.collections) collections[c] = this.raw(c);
+    return { kind: this.backupKind, version: 1, exportedAt: new Date().toISOString(), space: this.space, collections };
   }
 
   importBackup(backup, { replace = false } = {}) {
-    if (!backup || backup.kind !== 'nawah-backup' || !backup.collections) throw new Error('هذا الملف ليس نسخة احتياطية من نواة');
+    if (!backup || backup.kind !== this.backupKind || !backup.collections) throw new Error(this.backupError);
     let touched = 0;
-    for (const c of COLLECTIONS) {
+    for (const c of this.collections) {
       const incoming = Array.isArray(backup.collections[c]) ? backup.collections[c] : null;
       if (!incoming) continue;
       const result = replace ? { merged: incoming, changedLocal: true } : mergeRecords(this.raw(c), incoming, c);
@@ -304,7 +312,7 @@ class Store {
   }
 
   async wipe() {
-    for (const c of COLLECTIONS) this.data[c] = new Map();
+    for (const c of this.collections) this.data[c] = new Map();
     this.meta = {};
     if (this.db) {
       await tx(this.db, 'cols', 'readwrite', s => s.clear());

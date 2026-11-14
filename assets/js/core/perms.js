@@ -20,6 +20,7 @@ export const MODULES = [
   { key: 'log', label: 'سجل التغييرات', noOwn: true },
   { key: 'reports', label: 'التقارير', noOwn: true },
   { key: 'settings', label: 'الإعدادات', noOwn: true },
+  { key: 'trade', label: 'وضع التداول، وبياناته شخصية على جهاز كل عضو', noOwn: true },
 ];
 
 export const FLAGS = [
@@ -38,7 +39,7 @@ export const BUILTIN_ROLES = [
   {
     id: 'role-pm', name: 'مدير مشاريع', builtin: true,
     perms: {
-      modules: { ...all('view'), tasks: 'edit', clients: 'edit', projects: 'edit', finance: 'view', knowledge: 'edit', decisions: 'edit', meetings: 'edit', weekly: 'edit', settings: 'none', log: 'view' },
+      modules: { ...all('view'), tasks: 'edit', clients: 'edit', projects: 'edit', finance: 'view', knowledge: 'edit', decisions: 'edit', meetings: 'edit', weekly: 'edit', settings: 'none', log: 'view', trade: 'none' },
       flags: { approve: false, money: true, publish: false },
     },
   },
@@ -65,7 +66,7 @@ export const BUILTIN_ROLES = [
   },
   {
     id: 'role-viewer', name: 'مطلع', builtin: true,
-    perms: { modules: { ...all('view'), finance: 'none', settings: 'none', log: 'none' }, flags: {} },
+    perms: { modules: { ...all('view'), finance: 'none', settings: 'none', log: 'none', trade: 'none' }, flags: {} },
   },
 ];
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=Nawah Telegram copier
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=USER
+WorkingDirectory=/home/USER/nawah/tools/telegram-copier
+ExecStart=/home/USER/nawah/tools/telegram-copier/.venv/bin/python copier.py run
+Restart=always
+RestartSec=20
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -56,7 +56,13 @@ function explain(status, body = {}) {
   return `خطأ من GitHub (${status}) ${msg}`.trim();
 }
 
-export const sync = {
+// One factory serves the company data (nawah-data) and, when enabled, the personal
+// trading data in its own private repository.
+export function createSync({ store, collections, cfgKey, keyKey, repo = 'nawah-data', spaces = ['real'], what = 'بيانات الشركة', sharedKeyFrom = null }) {
+  const spaceOk = typeof spaces === 'function' ? spaces : s => spaces.includes(s);
+  const self = {
+  store,
+  collections,
   status: 'off',
   error: '',
   lastSync: 0,
@@ -66,21 +72,21 @@ export const sync = {
   timer: null,
   loop: null,
 
-  config() { return { owner: pagesOwner(), repo: 'nawah-data', branch: 'main', dir: 'data', ...local.get(CFG, {}) }; },
-  key() { return local.get(KEY, ''); },
+  config() { return { owner: pagesOwner(), repo, branch: 'main', dir: 'data', shareKey: false, ...local.get(cfgKey, {}) }; },
+  key() { const own = local.get(keyKey, ''); if (own) return own; return this.config().shareKey && sharedKeyFrom ? sharedKeyFrom() : ''; },
   save(cfg, key) {
-    local.set(CFG, { owner: cfg.owner.trim(), repo: cfg.repo.trim(), branch: (cfg.branch || 'main').trim(), dir: (cfg.dir || 'data').trim() });
-    if (key) local.set(KEY, key.trim());
-    store.setMeta('shas', {});
+    local.set(cfgKey, { owner: cfg.owner.trim(), repo: cfg.repo.trim(), branch: (cfg.branch || 'main').trim(), dir: (cfg.dir || 'data').trim(), shareKey: !!cfg.shareKey });
+    if (key) local.set(keyKey, key.trim());
+    this.store.setMeta('shas', {});
     this.start();
   },
   forget() {
-    local.del(KEY);
+    local.del(keyKey);
     this.set('off');
   },
   enabled() {
     const c = this.config();
-    return store.space === 'real' && !!(c.owner && c.repo && this.key());
+    return spaceOk(this.store.space) && !!(c.owner && c.repo && this.key());
   },
 
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
@@ -119,7 +125,7 @@ export const sync = {
     if (!r.ok) return { ok: false, message: explain(r.status, await r.json().catch(() => ({}))) };
     const repo = await r.json();
     if (!repo.private) {
-      return { ok: false, message: 'هذا المستودع عام، وأي شخص يستطيع قراءة بيانات الشركة منه. اجعله خاصا (Private) من إعداداته أولا ثم أعد المحاولة.' };
+      return { ok: false, message: `هذا المستودع عام، وأي شخص يستطيع قراءة ${what} منه. اجعله خاصا (Private) من إعداداته أولا ثم أعد المحاولة.` };
     }
     return { ok: true, login: user.login, repo: repo.full_name, branch: repo.default_branch };
   },
@@ -149,7 +155,7 @@ export const sync = {
 
   async writeFile(col, records, sha) {
     const c = this.config();
-    const who = store.me?.name ? ` (${store.me.name})` : '';
+    const who = this.store.me?.name ? ` (${this.store.me.name})` : '';
     const res = await this.api(this.path(col), {
       method: 'PUT',
       body: { message: `Update ${col}${who}`, content: b64(serialize(col, records)), branch: c.branch, ...(sha ? { sha } : {}) },
@@ -160,13 +166,13 @@ export const sync = {
   },
 
   remember(col, sha) {
-    const shas = { ...(store.meta.shas || {}) };
+    const shas = { ...(this.store.meta.shas || {}) };
     if (sha) shas[col] = sha; else delete shas[col];
-    store.setMeta('shas', shas);
+    this.store.setMeta('shas', shas);
   },
 
   async syncCol(col, rsha, known) {
-    const rev = store.rev?.[col] || 0;
+    const rev = this.store.rev?.[col] || 0;
     for (let attempt = 0; attempt < 4; attempt++) {
       let remote = null;
       let sha = rsha;
@@ -179,22 +185,22 @@ export const sync = {
       let changedLocal = false;
       let changedRemote;
       if (remote === null) {
-        merged = store.raw(col);
-        changedRemote = store.isDirty(col) || (!sha && merged.length > 0);
+        merged = this.store.raw(col);
+        changedRemote = this.store.isDirty(col) || (!sha && merged.length > 0);
       } else {
-        ({ merged, changedLocal, changedRemote } = mergeRecords(store.raw(col), remote, col));
+        ({ merged, changedLocal, changedRemote } = mergeRecords(this.store.raw(col), remote, col));
       }
-      if (changedLocal) store.replace(col, merged, { source: 'sync' });
+      if (changedLocal) this.store.replace(col, merged, { source: 'sync' });
       if (!sha && merged.length) changedRemote = true;
       if (!changedRemote) {
         this.remember(col, sha);
-        if ((store.rev?.[col] || 0) === rev) store.clearDirty(col);
+        if ((this.store.rev?.[col] || 0) === rev) this.store.clearDirty(col);
         return;
       }
       const res = await this.writeFile(col, merged, sha);
       if (res.ok) {
         this.remember(col, res.sha);
-        if ((store.rev?.[col] || 0) === rev) store.clearDirty(col);
+        if ((this.store.rev?.[col] || 0) === rev) this.store.clearDirty(col);
         return;
       }
       if (!res.conflict) throw res.error;
@@ -216,16 +222,16 @@ export const sync = {
         if (f.type === 'file' && f.name.endsWith('.json')) remote[f.name.slice(0, -5)] = f.sha;
       }
     }
-    const known = store.meta.shas || {};
-    for (const col of COLLECTIONS) {
+    const known = this.store.meta.shas || {};
+    for (const col of this.collections) {
       const rsha = remote[col] || null;
-      const dirty = store.isDirty(col);
+      const dirty = this.store.isDirty(col);
       if (rsha && rsha === known[col] && !dirty) continue;
-      if (!rsha && !dirty && store.raw(col).length === 0) continue;
+      if (!rsha && !dirty && this.store.raw(col).length === 0) continue;
       await this.syncCol(col, rsha, known[col] || null);
     }
     this.lastSync = Date.now();
-    store.setMeta('lastSync', this.lastSync);
+    this.store.setMeta('lastSync', this.lastSync);
   },
 
   async run() {
@@ -248,7 +254,7 @@ export const sync = {
   },
 
   start() {
-    this.lastSync = store.meta.lastSync || 0;
+    this.lastSync = this.store.meta.lastSync || 0;
     clearInterval(this.loop);
     if (!this.enabled()) { this.set('off'); return; }
     this.set('idle');
@@ -256,10 +262,13 @@ export const sync = {
     this.loop = setInterval(() => { if (document.visibilityState === 'visible') this.run(); }, 60000);
   },
 };
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => sync.run());
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && Date.now() - sync.lastSync > 20000) sync.run();
-  });
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => self.run());
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && Date.now() - self.lastSync > 20000) self.run();
+    });
+  }
+  return self;
 }
+
+export const sync = createSync({ store, collections: COLLECTIONS, cfgKey: CFG, keyKey: KEY });

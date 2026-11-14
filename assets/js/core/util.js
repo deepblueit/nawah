@@ -6,7 +6,7 @@ export const uid = (prefix = '') => prefix + Date.now().toString(36) + Math.rand
 export function normalize(s) {
   return String(s ?? '')
     .toLowerCase()
-    .replace(/[ً-ْٰـ]/g, '')
+    .replace(/[\u064B-\u0652\u0670\u0640]/g, '')
     .replace(/[أإآٱ]/g, 'ا')
     .replace(/ة/g, 'ه')
     .replace(/ى/g, 'ي')

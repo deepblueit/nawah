@@ -33,6 +33,26 @@ export const NAV = [
 
 export const BOTTOM = ['reports', 'settings', 'help', 'me'];
 
+// The trading mode is a second, separate menu with its own sections and data.
+export const NAV_TRADE = [
+  { key: 'market' },
+  { key: 'xnawah' },
+  { key: 'signals' },
+  { group: 'الأدوات', tone: 'nawah', hint: 'المعرفة والحسابات واليوميات' },
+  { key: 'library' },
+  { key: 'risk' },
+  { key: 'journal' },
+];
+export const BOTTOM_TRADE = ['tsettings', 'help', 'me'];
+
+// 'trade' or 'core'; shared sections (help, the personal page) return null and keep the current mode.
+export const modeOf = key => {
+  const s = SECTIONS[key];
+  if (!s) return null;
+  if (s.mode === 'trade') return 'trade';
+  return s.shared ? null : 'core';
+};
+
 export function canOpen(key) {
   const s = SECTIONS[key];
   if (!s) return false;
@@ -41,11 +61,11 @@ export function canOpen(key) {
   return true;
 }
 
-export function navList() {
+export function navList(mode = 'core') {
   const out = [];
   let pending = null;
   let current = null;
-  for (const item of NAV) {
+  for (const item of mode === 'trade' ? NAV_TRADE : NAV) {
     if (item.group) { pending = item; continue; }
     if (!canOpen(item.key)) continue;
     if (pending) { out.push({ group: pending }); current = pending; pending = null; }
