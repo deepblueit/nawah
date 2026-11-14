@@ -262,6 +262,23 @@
 .t-x-input { position: sticky; bottom: 0; z-index: 5; display: flex; gap: 8px; align-items: flex-end; padding: 12px 0 16px; border-top: 1px solid var(--line); background: var(--paper); }
 .t-x-input textarea { min-height: 46px !important; max-height: 160px; resize: none; border-radius: 14px !important; padding: 11px 14px !important; }
 .t-x-input .btn { height: 46px; width: 46px; border-radius: 14px; flex: none; }
+.t-x-input { flex-wrap: wrap; }
+.t-x-input textarea { flex: 1 1 0; min-width: 0; width: auto; }
+.t-x-mode { flex-basis: 100%; margin: 0; }
+.t-x-mode a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.t-x-free { display: grid; gap: 8px; line-height: 1.8; }
+.t-x-free p, .t-x-free ul, .t-x-free ol { margin: 0; }
+.t-x-free ol { padding-inline-start: 22px; display: grid; gap: 3px; }
+.t-x-msg > :not(.t-x-free) + .t-x-free { padding-top: 6px; }
+.t-x-status { display: flex; align-items: center; gap: 8px; margin: 0; }
+.t-x-dots { display: inline-flex; gap: 4px; }
+.t-x-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: t-dot 1s ease-in-out infinite; }
+.t-x-dots span:nth-child(2) { animation-delay: .15s; } .t-x-dots span:nth-child(3) { animation-delay: .3s; }
+.t-x-foot { flex-wrap: wrap; }
+.t-x-by { margin-inline-start: auto; }
+.t-x-by .mono { font-size: .76rem; }
+.t-okline { display: flex; gap: 6px; align-items: flex-start; }
+.t-okline .i { flex: none; margin-top: 3px; }
 .t-mini { font-size: .84rem; }
 .t-mini th, .t-mini td { padding: 7px 10px; }
 
@@ -343,5 +360,5 @@
   .t-break li { grid-template-columns: minmax(0, 1fr) 3.4em 5em; }
   .t-break li small { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .t-skel span, .t-x-typing span, .t-boot-dot { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .t-skel span, .t-x-typing span, .t-x-dots span, .t-boot-dot { animation: none !important; } }
 .t-nw { white-space: nowrap; }

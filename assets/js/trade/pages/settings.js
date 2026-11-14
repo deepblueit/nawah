@@ -5,18 +5,19 @@ import { icon } from '../../core/icons.js';
 import { ctx } from '../../core/ctx.js';
 import { onAct, onForm, onChange } from '../../core/actions.js';
 import { btn, toast, confirmBox } from '../../core/ui.js';
-import { local, download, readFile, ago } from '../../core/util.js';
+import { local, download, readFile, ago, count } from '../../core/util.js';
 import { TOKEN_URL } from '../../core/sync.js';
 import { tstore, tsync, secret, tsetting, saveTSetting } from '../tstore.js';
 import { clearCache, tdCredits } from '../data.js';
 import { deviceTz } from '../engine/time.js';
 import { DEFAULT_TEMPLATE, DEFAULT_BINARY_TEMPLATE } from '../engine/signals.js';
+import { SERVICES, extConfig, saveExtConfig, verifyService } from '../ext.js';
 
 let S = null;
 const TZS = ['Asia/Riyadh', 'Africa/Cairo', 'Asia/Dubai', 'Asia/Kuwait', 'Asia/Qatar', 'Asia/Baghdad', 'Asia/Amman', 'Africa/Casablanca', 'Europe/London', 'America/New_York', 'UTC'];
 
 export function mount(box) {
-  S = { box, off: [] };
+  S = { box, off: [], ext: null };
   S.off.push(tsync.on(() => S && drawSync()));
   draw();
 }
@@ -73,6 +74,8 @@ function draw() {
         ${btn('احفظ الصيغة', { type: 'submit', kind: 'quiet', cls: 'btn-small' })}
       </form>`, 'signal')}
 
+    <section class="module" id="ts-ext"></section>
+
     ${section('ts-risk', 'المخاطرة الافتراضية', html`<form data-form="t-set-risk" class="rec-form"><div class="fields">
         <div class="field"><label for="ts-bal">رصيد الحساب بالدولار</label><input id="ts-bal" name="balance" type="number" step="any" value="${risk.balance ?? 1000}"></div>
         <div class="field"><label for="ts-pct">المخاطرة لكل صفقة %</label><input id="ts-pct" name="riskPct" type="number" step="any" value="${risk.riskPct ?? 1}"></div>
@@ -89,7 +92,69 @@ function draw() {
       ${btn('امسح بيانات التداول على هذا الجهاز', { act: 't-set-wipe', icon: 'trash', kind: 'quiet', cls: 'danger-text' })}</div>`, 'download')}
   </div>`);
   drawSync();
+  drawExt();
   if (tg) checkTg(tg, true);
+}
+
+// ---------- free answers in إكس نواة
+const MODEL_FORMS = ['نموذج واحد', 'نموذجان', 'نماذج', 'نموذجا'];
+const money = x => (x >= 1 ? x.toFixed(2) : x.toFixed(x >= 0.1 ? 2 : 3));
+
+function drawExt() {
+  const el = S?.box.querySelector('#ts-ext');
+  if (!el) return;
+  const c = extConfig();
+  const svc = S.extSvc || c.service;
+  const base = svc === c.service ? c.base || SERVICES[svc].base : SERVICES[svc].base;
+  const keySaved = !!c.key && svc === c.service;
+  const models = S.ext?.models || [];
+  el.innerHTML = String(html`<header class="module-head"><h2>${icon('chat')}الإجابة الحرة في إكس نواة</h2>${c.on ? html`<span class="sync-pill s-ok">مفعلة</span>` : ''}</header>
+    <p class="small">تكتب خدمة خارجية الرد بأسلوب المحادثة، وتعتمد على أرقام المحرك ومكتبة نواة. المحرك يبقى مصدر الأرقام والبطاقات، وإذا تعذر الوصول إلى الخدمة يظهر رد المحرك كما هو.</p>
+    <details${c.on ? '' : raw(' open')}><summary class="small">كيف تحصل على مفتاح</summary><ol class="steps small">
+      <li><b>OpenRouter</b>، ومنه تصل إلى أغلب النماذج المعروفة بمفتاح واحد: أنشئ حسابا في موقع OpenRouter، ثم افتح Keys واضغط Create Key وانسخ المفتاح. النماذج المجانية خمسون طلبا في اليوم تقريبا، والمدفوعة تخصم من رصيد تشحنه.</li>
+      <li><b>Google</b>: من حساب Google افتح صفحة مفاتيح Gemini API وأنشئ مفتاحا. نماذج Flash لها حد مجاني يومي يظهر في الحساب نفسه.</li>
+      <li>اختر الخدمة هنا، والصق المفتاح، واضغط «تحقق واجلب النماذج»، ثم اختر نموذجا من القائمة وفعل الإجابة الحرة واحفظ.</li>
+    </ol></details>
+    <form data-form="t-set-ext" class="rec-form"><div class="fields">
+      <div class="field"><label for="te-svc">الخدمة</label><select id="te-svc" name="service" class="sel" data-change="t-ext-svc">${Object.entries(SERVICES).map(([k, v]) => html`<option value="${k}"${svc === k ? raw(' selected') : ''}>${v.name}</option>`)}</select></div>
+      <div class="field wide"><label for="te-base">العنوان</label><input id="te-base" name="base" dir="ltr" value="${base}" placeholder="https://..." ${svc === 'custom' ? '' : raw('readonly')}></div>
+      <div class="field wide"><label for="te-key">المفتاح${SERVICES[svc].needsKey ? '' : ' إن وجد'}</label><input id="te-key" name="key" type="password" dir="ltr" autocomplete="off" placeholder="${keySaved ? 'محفوظ على هذا الجهاز' : 'الصق المفتاح هنا'}"></div>
+      <div class="field wide"><label for="te-model">النموذج</label><input id="te-model" name="model" dir="ltr" list="te-models" autocomplete="off" value="${c.model && svc === c.service ? c.model : ''}" placeholder="${models.length ? 'اكتب جزءا من الاسم واختر' : 'اضغط «تحقق واجلب النماذج» أولا'}">
+        <datalist id="te-models">${modelOptions(models)}</datalist></div>
+      <label class="switch-line wide"><input type="checkbox" name="on"${c.on ? raw(' checked') : ''}><span>فعل الإجابة الحرة في إكس نواة</span></label>
+    </div><p class="field-err" role="alert"></p>
+    <div class="row-btns">${btn('تحقق واجلب النماذج', { act: 't-ext-verify', kind: 'quiet', cls: 'btn-small' })}${btn('احفظ', { type: 'submit', kind: 'primary', cls: 'btn-small' })}${c.base ? btn('احذف الإعداد', { act: 't-ext-del', kind: 'quiet', cls: 'btn-small' }) : ''}</div></form>
+    <div id="te-info" class="small">${S.ext ? extInfo(S.ext) : ''}</div>
+    <p class="small muted">يصل إلى الخدمة نص سؤالك وآخر رسائل المحادثة ونتائج المحرك المتعلقة بالسؤال، ومنها أرقام قنواتك ويومياتك إذا سألت عنها، وإعدادات المخاطرة في أسئلة الصفقات. لا تصلها مفاتيحك ولا بيانات الشركة. الخدمات المجانية قد تستخدم ما يصلها لتحسين خدماتها. المفتاح يحفظ في هذا المتصفح فقط.</p>`);
+}
+
+const modelOptions = models => models.map(m => html`<option value="${m.id}">${m.free ? 'مجاني' : m.price ? `${money(m.price.in)}$ و${money(m.price.out)}$ للمليون` : ''}</option>`);
+
+function extInfo(v) {
+  const free = v.models.filter(m => m.free).length;
+  const q = v.quota?.free;
+  return html`<p class="t-okline">${icon('checkCircle')}<span>تم التحقق: ${count(v.models.length, MODEL_FORMS)} يكتب نصا${free ? `، منها ${count(free, MODEL_FORMS)} مجانا` : ''}.${q ? ` الطلبات المجانية المتبقية اليوم ${q.remaining} من ${q.limit}.` : ''}${v.quota?.remaining != null ? ` المتبقي من حد المفتاح ${money(v.quota.remaining)}$.` : ''}</span></p>`;
+}
+
+function extForm() {
+  const f = S?.box.querySelector('[data-form="t-set-ext"]');
+  if (!f) return null;
+  const c = extConfig();
+  const service = f.service.value;
+  return { f, service, base: f.base.value.trim().replace(/\/+$/, ''), key: f.key.value.trim() || (service === c.service ? c.key : ''), model: f.model.value.trim(), on: f.on.checked };
+}
+
+async function verifyExt(v) {
+  const err = v.f.querySelector('.field-err');
+  err.textContent = 'جار التحقق';
+  try {
+    S.ext = await verifyService(v);
+    err.textContent = '';
+    return true;
+  } catch (e) {
+    err.textContent = `${e.message}.`;
+    return false;
+  }
 }
 
 function drawSync() {
@@ -159,6 +224,23 @@ onForm({
     saveTSetting('risk', { balance: n('balance'), riskPct: n('riskPct'), maxDailyLossPct: n('maxDailyLossPct'), payout: n('payout'), leverage: n('leverage') });
     toast('حفظت القيم');
   },
+  't-set-ext': async () => {
+    const v = extForm();
+    if (!v) return;
+    const err = v.f.querySelector('.field-err');
+    if (!v.base) { err.textContent = 'اكتب عنوان الخدمة.'; return; }
+    if (v.on && !v.model) { err.textContent = 'اختر نموذجا من القائمة.'; return; }
+    if (v.on && SERVICES[v.service].needsKey && !v.key) { err.textContent = 'الصق المفتاح أولا.'; return; }
+    // turning it on checks the address and the key first, so a broken setting is never saved as active
+    if (v.on && !(S.ext && S.ext.base === v.base) && !(await verifyExt(v))) return;
+    const meta = S.ext?.models.find(m => m.id === v.model);
+    if (v.on && S.ext && !meta) { err.textContent = 'هذا النموذج غير موجود في قائمة الخدمة. اختر من القائمة.'; return; }
+    const old = extConfig();
+    saveExtConfig({ service: v.service, base: v.base, key: v.key, model: v.model, on: v.on, tools: meta ? meta.tools : old.model === v.model ? old.tools : null });
+    S.extSvc = null;
+    toast(v.on ? 'فعلت الإجابة الحرة' : 'حفظ الإعداد، والإجابة الحرة متوقفة');
+    drawExt();
+  },
   't-set-sync': async f => {
     const cfg = { owner: f.owner.value.trim(), repo: f.repo.value.trim(), branch: 'main', dir: 'data', shareKey: f.shareKey.checked };
     const key = f.key.value.trim() || (cfg.shareKey ? local.get('nawah.sync.key', '') : local.get('nawah.tsync.key', ''));
@@ -176,6 +258,23 @@ onForm({
 
 onAct({
   't-set-td-del': () => { secret.set('td', ''); toast('حذف المفتاح'); draw(); },
+  't-ext-verify': async () => {
+    const v = extForm();
+    if (!v || !(await verifyExt(v))) return;
+    // only the list and the result change, so what the person typed stays in place
+    const box = S.box.querySelector('#ts-ext');
+    box.querySelector('#te-models').innerHTML = String(html`${modelOptions(S.ext.models)}`);
+    box.querySelector('#te-info').innerHTML = String(extInfo(S.ext));
+    box.querySelector('#te-model').placeholder = 'اكتب جزءا من الاسم واختر';
+  },
+  't-ext-del': async () => {
+    if (!(await confirmBox('حذف إعداد الإجابة الحرة؟', { ok: 'احذف', danger: true, detail: 'يحذف العنوان والمفتاح والنموذج من هذا المتصفح، ويعود إكس نواة إلى ردود المحرك.' }))) return;
+    saveExtConfig(null);
+    S.ext = null;
+    S.extSvc = null;
+    toast('حذف الإعداد');
+    drawExt();
+  },
   't-set-tg-del': async () => { const t = await import('../telegram.js'); t.stop(); secret.set('tg', ''); secret.set('poll', false); toast('حذف رمز البوت'); draw(); },
   't-set-hook-del': async () => { const t = await import('../telegram.js'); try { await t.dropWebhook(); toast('حذف الويب هوك'); checkTg(secret.get('tg'), true); } catch (e) { toast(e.message); } },
   't-set-owner-reset': () => { secret.set('tgOwner', null); toast('سيصبح مالك البوت أول من يراسله في الخاص'); draw(); },
@@ -192,6 +291,7 @@ onAct({
 });
 
 onChange({
+  't-ext-svc': el => { if (!S) return; S.extSvc = el.value; S.ext = null; drawExt(); },
   't-set-tz': el => { local.set('nawah.trade.tz', el.value); toast('غير التوقيت، ويظهر في الشارت عند فتحه'); },
   't-set-poll': async el => {
     const t = await import('../telegram.js');

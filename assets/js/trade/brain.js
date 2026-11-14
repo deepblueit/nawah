@@ -1,15 +1,17 @@
 // إكس نواة: answers built from the same engine that reads the chart, the library, the risk
 // arithmetic and the person's own records. Replies are data blocks, rendered and escaped by the page.
 import { understand } from './engine/intent.js';
-import { analyze, TREND_TEXT, statusWord } from './engine/analyze.js';
-import { symbolInfo, tfInfo, higherTf, fmtPrice } from './engine/symbols.js';
+import { TREND_TEXT, statusWord } from './engine/analyze.js';
+import { symbolInfo, tfInfo, fmtPrice } from './engine/symbols.js';
 import { marketClock, QUALITY_TEXT, fmtTime, deviceTz } from './engine/time.js';
-import { positionSize, conversionNeed, martingale, breakEven, journalStats } from './engine/risk.js';
+import { martingale, breakEven, journalStats } from './engine/risk.js';
 import { channelStats } from './engine/signals.js';
-import { loadCandles, quotes, sourceFor } from './data.js';
+import { sourceFor } from './data.js';
 import { tstore, tsetting } from './tstore.js';
 import { searchKb, searchSchools, schoolName, ENTRIES, figure } from './kb/index.js';
 import { count, local } from '../core/util.js';
+import { runAnalysis, analysisFacts, libraryFacts, computeSize, sizeFacts, binaryFacts, sessionFacts, channelFacts, journalFacts, signalFacts } from './facts.js';
+import { extReady } from './ext.js';
 
 const SCHOOLS_N = ['مدرسة واحدة', 'مدرستان', 'مدارس', 'مدرسة'];
 const tz = () => local.get('nawah.trade.tz', '') || deviceTz();
@@ -23,8 +25,16 @@ export const SUGGESTIONS = [
 
 const P = (p, info) => fmtPrice(p, info);
 
-export async function respond(text, mem = {}) {
+// Answers a question with cards. With facts: true it also returns the engine's results as plain
+// data, for the outside writing service when the person has turned it on.
+export async function respond(text, mem = {}, { facts = false } = {}) {
   const it = understand(text, mem);
+  it.wantFacts = facts;
+  const out = await route(it, mem);
+  return { intent: it.intent, ...out };
+}
+
+async function route(it, mem) {
   try {
     switch (it.intent) {
       case 'greet': return { blocks: [{ t: 'p', text: 'أهلا بك. اسألني عن أي رمز لأحلله بكل المدارس، أو عن أي نموذج لأشرحه، أو عن حجم صفقتك.' }, { t: 'ask', items: SUGGESTIONS.slice(0, 4) }], mem };
@@ -62,7 +72,9 @@ function help(mem) {
         'فحص أي توصية تلصقها: هل ينقصها شيء، وهل وقفها منطقي، وهل يتفق المحرك معها.',
         'أداء قنواتك الموثق بالأسعار، وأداء يومياتك.',
       ] },
-      { t: 'p', text: 'أعمل على جهازك بمحرك التحليل نفسه الذي يقرأ الشارت، فلا يخرج سؤالك من جهازك، وما يخرج هو طلبات الأسعار فقط.' },
+      { t: 'p', text: extReady()
+        ? 'الإجابة الحرة مفعلة: يصل سؤالك وآخر المحادثة ونتائج المحرك المتعلقة به إلى الخدمة التي اخترتها في إعدادات التداول لتكتب الرد، والأرقام تبقى من المحرك.'
+        : 'أعمل على جهازك بمحرك التحليل نفسه الذي يقرأ الشارت، فلا يخرج سؤالك من جهازك، وما يخرج هو طلبات الأسعار فقط.' },
       { t: 'ask', items: SUGGESTIONS.slice(0, 6) },
     ],
     mem,
@@ -92,12 +104,10 @@ async function reading(it, mem) {
   if (!info) return { blocks: [{ t: 'p', text: 'لم أتعرف على الرمز. جرب اسمه بالإنجليزية مثل XAUUSD أو EURUSD.' }], mem };
   if (it.otc) return { blocks: [{ t: 'warn', text: 'رموز OTC أسعار يولدها الوسيط نفسه ولا ترتبط بالسوق الحقيقي، فلا يصلح تحليلها ببيانات حقيقية. أستطيع تحليل الرمز الحقيقي في أوقات السوق.' }], mem: { ...mem, symbol: info.s } };
   const tf = tfInfo(it.tf || (mem.symbol === info.s && mem.tf) || tsetting('market', {}).tf || '1h').k;
-  const res = await loadCandles(info.s, tf);
-  const h = higherTf(tf);
-  const htf = h ? await loadCandles(info.s, h).catch(() => null) : null;
-  const r = analyze(res.candles, { symbol: info.s, tf, htf: htf?.candles, payout: (tsetting('risk', {}).payout || 85) / 100 });
+  const run = await runAnalysis(info.s, tf);
+  const { res, r } = run;
   const nextMem = { ...mem, symbol: info.s, tf, plan: r.plan?.side ? { side: r.plan.side, entry: r.plan.entry.price, stop: r.plan.stop } : null };
-  if (!r.ok) return { blocks: [{ t: 'warn', text: r.reason }], mem: nextMem };
+  if (!r.ok) return { blocks: [{ t: 'warn', text: r.reason }], mem: nextMem, facts: analysisFacts(run) };
   const F = p => P(p, info);
   const blocks = [{ t: 'verdict', symbol: info.s, name: info.ar, frame: r.frame, bias: r.bias, score: r.score, confidence: r.confidenceText, trend: r.trendText, mtf: r.mtf ? TREND_TEXT[r.mtf.bias] : null, price: F(r.price) }];
   if (res.source === 'demo') blocks.push({ t: 'note', text: 'التحليل على أسعار تجريبية مولدة لأن هذا الرمز بلا مصدر أسعار حقيقي على جهازك. أضف مفتاح Twelve Data المجاني من إعدادات التداول.' });
@@ -136,27 +146,36 @@ async function reading(it, mem) {
   const other = tf === '1h' ? '4 ساعات' : tf === '4h' ? 'اليومي' : 'الساعة';
   blocks.push({ t: 'actions', items: [{ label: 'افتح على الشارت', href: `#/market?sym=${info.s}&tf=${tf}` }, ...(r.plan.side ? [{ label: 'احسب الحجم', href: `#/risk?sym=${info.s}&entry=${r.plan.entry.price}&sl=${r.plan.stop}` }] : [])] });
   blocks.push({ t: 'ask', items: [`وعلى ${other}؟`, it.intent === 'binary' ? 'والخطة؟' : 'وللخيارات الثنائية؟', 'والنماذج؟', 'والدعوم؟'] });
-  return { blocks, mem: nextMem };
+  const focus = { analyze: 'full reading', levels: 'support and resistance levels', patterns: 'patterns', binary: 'binary-options reading', plan: 'trade plan' }[it.intent];
+  return { blocks, mem: nextMem, facts: { asked_about: focus, ...analysisFacts(run) } };
 }
 
 async function compare(it, mem) {
   const list = it.symbols.slice(0, 4);
   const tf = tfInfo(it.tf || mem.tf || '1h').k;
   const rows = [];
+  const facts = [];
   for (const s of list) {
     try {
-      const res = await loadCandles(s, tf);
-      const h = higherTf(tf);
-      const htf = h ? await loadCandles(s, h).catch(() => null) : null;
-      const r = analyze(res.candles, { symbol: s, tf, htf: htf?.candles });
+      const run = await runAnalysis(s, tf);
+      const { res, r } = run;
       rows.push(r.ok ? [s, r.biasText, `${Math.abs(r.score)}`, r.trendText, r.mtf ? TREND_TEXT[r.mtf.bias] : 'غير محمل', res.source === 'demo' ? 'تجريبية' : 'حقيقية'] : [s, 'لا قراءة', '', '', '', '']);
+      if (it.wantFacts) {
+        const f = analysisFacts(run);
+        facts.push({ symbol: f.symbol, prices: f.prices, price: f.price, verdict: f.verdict, trend: f.trend, higher_timeframe: f.higher_timeframe, volatility: f.volatility, plan: f.plan, warnings: f.warnings });
+      }
     } catch (e) { rows.push([s, e.message, '', '', '', '']); }
   }
-  return { blocks: [{ t: 'title', text: `مقارنة على ${tfInfo(tf).frame}` }, { t: 'table', head: ['الرمز', 'الترجيح', 'التوافق', 'الاتجاه', 'الإطار الأعلى', 'الأسعار'], rows }, { t: 'p', text: 'الأعلى توافقا ليس الأربح بالضرورة؛ قارن أيضا مسافة الوقف ونسبة العائد في خطة كل رمز.' }, { t: 'ask', items: list.map(s => `حلل ${s}`) }], mem: { ...mem, tf } };
+  return { blocks: [{ t: 'title', text: `مقارنة على ${tfInfo(tf).frame}` }, { t: 'table', head: ['الرمز', 'الترجيح', 'التوافق', 'الاتجاه', 'الإطار الأعلى', 'الأسعار'], rows }, { t: 'p', text: 'الأعلى توافقا ليس الأربح بالضرورة؛ قارن أيضا مسافة الوقف ونسبة العائد في خطة كل رمز.' }, { t: 'ask', items: list.map(s => `حلل ${s}`) }], mem: { ...mem, tf }, facts: { comparison_timeframe: tfInfo(tf).frame, symbols: facts } };
 }
 
 // ---------- the library
 function explain(it, mem) {
+  const out = explainCards(it, mem);
+  return it.wantFacts ? { ...out, facts: { library: libraryFacts(it.raw) } } : out;
+}
+
+function explainCards(it, mem) {
   const sc = searchSchools(it.raw)[0];
   const hits = searchKb(it.raw, { limit: 4 });
   if (sc && sc.score >= 20 && (!hits[0] || hits[0].score < sc.score + 10)) {
@@ -186,26 +205,17 @@ function explain(it, mem) {
 
 // ---------- arithmetic
 async function risk(it, mem) {
-  const r = tsetting('risk', { balance: 1000, riskPct: 1 });
   const info = symbolInfo(it.symbol || mem.symbol);
   if (!info) return { blocks: [{ t: 'p', text: 'لأي رمز؟ مثال: كم لوتا أحتاج على اليورو دولار لحساب 1000 ومخاطرة 1% ووقف 30 نقطة؟' }], mem };
-  const balance = it.nums.balance ?? r.balance;
-  const pct = it.nums.pct ?? r.riskPct;
-  const q = await quotes([info.s, ...(conversionNeed(info) ? [conversionNeed(info).symbol] : [])]).catch(() => ({}));
-  const price = q[info.s]?.price || (mem.plan && mem.symbol === info.s ? mem.plan.entry : null);
-  let entry = price;
-  let stop = null;
-  if (it.nums.stopPips != null && price) stop = price - it.nums.stopPips * info.pip;
-  else if (mem.plan && mem.symbol === info.s) { entry = mem.plan.entry; stop = mem.plan.stop; }
-  if (entry == null || stop == null) return { blocks: [{ t: 'p', text: `كم مسافة الوقف بالنقاط على ${info.s}؟ اكتب مثلا: الستوب 25 نقطة.` }], mem: { ...mem, symbol: info.s } };
-  const need = conversionNeed(info);
-  const conv = need ? (q[need.symbol]?.price ? (need.invert ? 1 / q[need.symbol].price : q[need.symbol].price) : null) : null;
-  const res = positionSize({ symbol: info.s, balance, riskPct: pct, entry, stop, price: entry, quoteToUsd: conv, leverage: r.leverage || 100 });
-  if (!res || res.needsRate) return { blocks: [{ t: 'p', text: `هذا زوج تقاطعي ويحتاج سعر ${need?.symbol} لحساب قيمة النقطة. افتح صفحة المخاطرة واكتبه هناك.` }, { t: 'actions', items: [{ label: 'صفحة المخاطرة', href: `#/risk?sym=${info.s}` }] }], mem };
+  const z = await computeSize({ symbol: info.s, balance: it.nums.balance, riskPct: it.nums.pct, stopPips: it.nums.stopPips, mem });
+  const facts = sizeFacts(z);
+  const { balance, pct, entry, stop, need, res } = z;
+  if (z.missing) return { blocks: [{ t: 'p', text: `كم مسافة الوقف بالنقاط على ${info.s}؟ اكتب مثلا: الستوب 25 نقطة.` }], mem: { ...mem, symbol: info.s }, facts };
+  if (!res || res.needsRate) return { blocks: [{ t: 'p', text: `هذا زوج تقاطعي ويحتاج سعر ${need?.symbol} لحساب قيمة النقطة. افتح صفحة المخاطرة واكتبه هناك.` }, { t: 'actions', items: [{ label: 'صفحة المخاطرة', href: `#/risk?sym=${info.s}` }] }], mem, facts };
   const rows = info.cls === 'crypto'
     ? [['المبلغ المعرض', `${res.amount.toFixed(2)} $`], ['الكمية', `${res.units.toFixed(4)} ${info.base}`], ['قيمة المركز', `${res.notional.toFixed(2)} $`]]
     : [['المبلغ المعرض', `${res.amount.toFixed(2)} $ (${pct}% من ${balance})`], ['حجم الصفقة', `${res.lotsRounded.toFixed(2)} لوت`], ['مسافة الوقف', `${res.pips.toFixed(1)} نقطة`], ['قيمة النقطة لحجمك', `${res.perPip.toFixed(2)} $`], ['الخسارة الفعلية عند الوقف', `${res.actualRisk.toFixed(2)} $`]];
-  return { blocks: [{ t: 'title', text: `حجم الصفقة على ${info.s}` }, { t: 'kv', rows }, ...(res.lots < 0.01 && info.cls !== 'crypto' ? [{ t: 'warn', text: 'الحجم أقل من 0.01 لوت، وهو أصغر حجم عند أغلب الوسطاء. قلل مسافة الوقف أو تقبل مخاطرة أعلى قليلا.' }] : []), { t: 'actions', items: [{ label: 'افتح الحاسبة الكاملة', href: `#/risk?sym=${info.s}&entry=${entry}&sl=${stop}` }] }], mem: { ...mem, symbol: info.s } };
+  return { blocks: [{ t: 'title', text: `حجم الصفقة على ${info.s}` }, { t: 'kv', rows }, ...(res.lots < 0.01 && info.cls !== 'crypto' ? [{ t: 'warn', text: 'الحجم أقل من 0.01 لوت، وهو أصغر حجم عند أغلب الوسطاء. قلل مسافة الوقف أو تقبل مخاطرة أعلى قليلا.' }] : []), { t: 'actions', items: [{ label: 'افتح الحاسبة الكاملة', href: `#/risk?sym=${info.s}&entry=${entry}&sl=${stop}` }] }], mem: { ...mem, symbol: info.s }, facts };
 }
 
 function mg(it, mem) {
@@ -223,13 +233,14 @@ function mg(it, mem) {
       { t: 'actions', items: [{ label: 'جرب أرقامك في الحاسبة', href: '#/risk' }] },
     ],
     mem,
+    facts: binaryFacts({ payout, winRate: wr, stake, steps }),
   };
 }
 
 function be(it, mem) {
   const payout = it.nums.payout || it.nums.pct || tsetting('risk', {}).payout || 85;
   const b = breakEven(payout);
-  return { blocks: [{ t: 'kv', rows: [['العائد', `${payout}%`], ['نسبة النجاح اللازمة للتعادل', `${(b * 100).toFixed(1)}%`]] }, { t: 'p', text: `أي نسبة نجاح أقل من ${(b * 100).toFixed(1)}% على مئة صفقة أو أكثر تعني خسارة مؤكدة على المدى الطويل، مهما كانت جودة الإشارات.` }], mem };
+  return { blocks: [{ t: 'kv', rows: [['العائد', `${payout}%`], ['نسبة النجاح اللازمة للتعادل', `${(b * 100).toFixed(1)}%`]] }, { t: 'p', text: `أي نسبة نجاح أقل من ${(b * 100).toFixed(1)}% على مئة صفقة أو أكثر تعني خسارة مؤكدة على المدى الطويل، مهما كانت جودة الإشارات.` }], mem, facts: binaryFacts({ payout }) };
 }
 
 function session(mem) {
@@ -246,21 +257,22 @@ function session(mem) {
       { t: 'note', text: `الأوقات بتوقيت ${z}، وتراعي التوقيت الصيفي في أوروبا وأمريكا وأستراليا.` },
     ],
     mem,
+    facts: sessionFacts(now),
   };
 }
 
 function channels(mem) {
   const chans = tstore.all('channels').filter(c => c.role !== 'target');
   const rows = chans.map(c => ({ c, s: channelStats(tstore.all('signals').filter(x => x.src === c.id)) })).filter(x => x.s.total).sort((a, b) => b.s.total - a.s.total).slice(0, 6);
-  if (!rows.length) return { blocks: [{ t: 'p', text: 'لا توصيات مسجلة بعد. اربط البوت من صفحة التوصيات، أو الصق توصية هنا لأفحصها.' }, { t: 'actions', items: [{ label: 'التوصيات والقنوات', href: '#/signals?tab=setup' }] }], mem };
-  return { blocks: [{ t: 'table', head: ['القناة', 'التوصيات', 'نجاح موثق', 'نجاح معلن', 'أطول خسائر'], rows: rows.map(({ c, s }) => [c.title, String(s.total), s.winRate != null ? `${Math.round(s.winRate * 100)}% من ${s.verified}` : 'لم يتحقق', s.claimedWinRate != null ? `${Math.round(s.claimedWinRate * 100)}%` : 'لا إعلانات', String(s.maxLossStreak)]) }, { t: 'p', text: 'التحقق بقاعدة الهدف الأول قبل الوقف، على الأسعار من وقت نشر كل توصية. أقل من 30 توصية موثقة لا تكفي للحكم.' }, { t: 'actions', items: [{ label: 'تفاصيل الأداء', href: '#/signals?tab=stats' }] }], mem };
+  if (!rows.length) return { blocks: [{ t: 'p', text: 'لا توصيات مسجلة بعد. اربط البوت من صفحة التوصيات، أو الصق توصية هنا لأفحصها.' }, { t: 'actions', items: [{ label: 'التوصيات والقنوات', href: '#/signals?tab=setup' }] }], mem, facts: channelFacts() };
+  return { blocks: [{ t: 'table', head: ['القناة', 'التوصيات', 'نجاح موثق', 'نجاح معلن', 'أطول خسائر'], rows: rows.map(({ c, s }) => [c.title, String(s.total), s.winRate != null ? `${Math.round(s.winRate * 100)}% من ${s.verified}` : 'لم يتحقق', s.claimedWinRate != null ? `${Math.round(s.claimedWinRate * 100)}%` : 'لا إعلانات', String(s.maxLossStreak)]) }, { t: 'p', text: 'التحقق بقاعدة الهدف الأول قبل الوقف، على الأسعار من وقت نشر كل توصية. أقل من 30 توصية موثقة لا تكفي للحكم.' }, { t: 'actions', items: [{ label: 'تفاصيل الأداء', href: '#/signals?tab=stats' }] }], mem, facts: channelFacts() };
 }
 
 function journal(mem) {
   const st = journalStats(tstore.all('trades'));
-  if (!st.n) return { blocks: [{ t: 'p', text: 'لا صفقات مغلقة في يومياتك بعد.' }, { t: 'actions', items: [{ label: 'سجل صفقة', href: '#/journal?add=1' }] }], mem };
+  if (!st.n) return { blocks: [{ t: 'p', text: 'لا صفقات مغلقة في يومياتك بعد.' }, { t: 'actions', items: [{ label: 'سجل صفقة', href: '#/journal?add=1' }] }], mem, facts: { trades: 0 } };
   const best = st.bySetup.filter(x => x.n >= 3).sort((a, b) => b.r - a.r)[0];
-  return { blocks: [{ t: 'kv', rows: [['عدد الصفقات', String(st.n)], ['نسبة النجاح', `${Math.round(st.winRate * 100)}%`], ['الصافي', st.net.toFixed(2)], ['متوسط العائد', st.avgR != null ? `${st.avgR.toFixed(2)}R` : 'غير محسوب'], ['أطول خسائر متتالية', String(st.maxLossStreak)], ['التزمت بالخطة', `${Math.round(st.followedPlan * 100)}%`]] }, ...(best ? [{ t: 'p', text: `أفضل سبب دخول عندك حتى الآن: ${best.k}، بنسبة نجاح ${Math.round(best.winRate * 100)}% في ${count(best.n, ['صفقة واحدة', 'صفقتين', 'صفقات', 'صفقة'])}.` }] : []), { t: 'actions', items: [{ label: 'افتح اليوميات', href: '#/journal' }] }], mem };
+  return { blocks: [{ t: 'kv', rows: [['عدد الصفقات', String(st.n)], ['نسبة النجاح', `${Math.round(st.winRate * 100)}%`], ['الصافي', st.net.toFixed(2)], ['متوسط العائد', st.avgR != null ? `${st.avgR.toFixed(2)}R` : 'غير محسوب'], ['أطول خسائر متتالية', String(st.maxLossStreak)], ['التزمت بالخطة', `${Math.round(st.followedPlan * 100)}%`]] }, ...(best ? [{ t: 'p', text: `أفضل سبب دخول عندك حتى الآن: ${best.k}، بنسبة نجاح ${Math.round(best.winRate * 100)}% في ${count(best.n, ['صفقة واحدة', 'صفقتين', 'صفقات', 'صفقة'])}.` }] : []), { t: 'actions', items: [{ label: 'افتح اليوميات', href: '#/journal' }] }], mem, facts: journalFacts() };
 }
 
 function news(it, mem) {
@@ -280,10 +292,7 @@ async function signal(it, mem) {
   if (info && !p.otc && sourceFor(info.s) !== 'demo') {
     try {
       const tf = p.kind === 'binary' ? (p.expiryMin && p.expiryMin <= 3 ? '1m' : '5m') : '1h';
-      const res = await loadCandles(info.s, tf);
-      const h = higherTf(tf);
-      const htf = h ? await loadCandles(info.s, h).catch(() => null) : null;
-      const r = analyze(res.candles, { symbol: info.s, tf, htf: htf?.candles });
+      const { r } = await runAnalysis(info.s, tf);
       if (r.ok) {
         const a = r.volatility.atr;
         const agree = r.bias === p.side;
@@ -302,7 +311,7 @@ async function signal(it, mem) {
     } catch (e) { blocks.push({ t: 'note', text: `تعذر جلب الأسعار للفحص: ${e.message}` }); }
   }
   blocks.push({ t: 'actions', items: [{ label: 'أضفها إلى التوصيات', href: `#/signals?add=1&text=${encodeURIComponent(p.text.slice(0, 900))}` }, ...(info ? [{ label: 'على الشارت', href: `#/market?sym=${info.s}` }] : [])] });
-  return { blocks, mem: { ...mem, symbol: info?.s || mem.symbol } };
+  return { blocks, mem: { ...mem, symbol: info?.s || mem.symbol }, facts: it.wantFacts ? { signal: await signalFacts(p.text) } : null };
 }
 
 // The conversation as text, for copying.
